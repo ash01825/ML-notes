@@ -197,3 +197,32 @@ for iter in range(max_iters):
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
 print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
 
+"""
+Using device: mps
+step 0: train loss 4.3340, val loss 4.3322
+step 500: train loss 2.0304, val loss 2.1079
+step 1000: train loss 1.6131, val loss 1.7903
+step 1500: train loss 1.4420, val loss 1.6478
+step 2000: train loss 1.3429, val loss 1.5742
+step 2500: train loss 1.2815, val loss 1.5376
+ step 3000: train loss 1.2277, val loss 1.5060
+step 3500: train loss 1.1859, val loss 1.5035
+step 4000: train loss 1.1460, val loss 1.4860
+step 4500: train loss 1.1084, val loss 1.4881
+
+ more caze much to a great defend contraction.
+Come, Pomfret, though you for none of you are:
+I know the person is defend by the poor heart; you
+would some persuade proof for a petition of men.
+
+ARCHIDAMUS:
+No 'tis so; say, then; but hadd not stop, he
+not to what you do, what may ranst, fair le,
+Ne'er remain to the defect of your flesh,
+The good sacred and and come being down,
+Or gentle many a sensivit the fight of your droop
+Is confit to my opinion as of my wint.
+
+KING EWISTARD IV:
+She's God an
+"""
