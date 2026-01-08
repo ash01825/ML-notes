@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import tiktoken
+import time
 import sys
 
 if torch.backends.mps.is_available():
@@ -12,7 +13,6 @@ elif torch.cuda.is_available():
     device = 'cuda'
 else:
     device = 'cpu'
-enc= tiktoken.get_encoding("gpt2")
 
 
 class CasualSelfAttention(nn.Module):
@@ -170,20 +170,51 @@ class GPT(nn.Module):
 
         return model
 
-with open('input.txt','r') as f:
-    text = f.read()
+class DataLoaderLite:
+    def __init__(self,B,T):
+        self.B,self.T = B,T
+        with open('input.txt', 'r') as f:
+            text = f.read()
+        enc = tiktoken.get_encoding("gpt2")
+        self.tokens = torch.tensor(enc.encode(text))
+        print(f"loaded{len(self.tokens)} tokens")
+        print(f"1 epoch = {len(self.tokens)//(B*T)} batches")
+        self.current_position = 0
 
-tokens = enc.encode(text)
-B,T = 4,32
-buf = torch.tensor(tokens[:B*T+1])
-x = buf[:-1].view(B,T).to(device)
-y = buf[1:].view(B,T).to(device)
+    def next_batch(self):
+        B,T = self.B,self.T
+        buf = self.tokens[self.current_position:self.current_position+B*T+1]
+        buf = buf.to(device)
+        x = buf[:-1].view(B, T)
+        y = buf[1:].view(B, T)
+        self.current_position +=  B*T
+        if self.current_position + (B*T+1) > len(self.tokens):
+            self.current_position = 0
+        return x,y
 
+train_loader = DataLoaderLite(4,1024)
+torch.set_float32_matmul_precision('high')
 model = GPT(GPTConfig())
 model.to(device)
-logits, loss = model(x,y)
+model = torch.compile(model)
+optimizer = torch.optim.AdamW(model.parameters(), lr=4e-4)
+for i in range(50):
+    t0 = time.time()
+    x,y = train_loader.next_batch()
+    optimizer.zero_grad()
+    with torch.autocast(device_type=device,dtype = torch.bfloat16):
+        logits,loss = model(x,y)
+        import code;code.interact(local=locals())
+    loss.backward()
+    optimizer.step()
+    # torch.cuda.synchronize()
+    loss_item = loss.item()
+    t1 = time.time()
+    dt = (t1-t0)*1000
+    token_per_sec = (train_loader.B*train_loader.T)/(dt/1000)
+    print(f"step {i}:, loss {loss.item()},dt {dt:.2f}ms, tokens/sec {token_per_sec:.2f}")
 
-print(loss)
+
 sys.exit(0)
 
 
