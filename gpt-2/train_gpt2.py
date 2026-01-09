@@ -7,6 +7,7 @@ import tiktoken
 import time
 import sys
 
+
 if torch.backends.mps.is_available():
     device = 'mps'
 elif torch.cuda.is_available():
@@ -33,10 +34,11 @@ class CasualSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C//self.n_head).transpose(1,2)
         k = k.view(B, T, self.n_head, C//self.n_head).transpose(1,2)
         v = v.view(B, T, self.n_head, C//self.n_head).transpose(1,2)
-        attn = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        attn = attn.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
-        attn = F.softmax(attn, dim=-1)
-        y = attn @ v
+        # attn = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        # attn = attn.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        # attn = F.softmax(attn, dim=-1)
+        # y = attn @ v
+        y = F.scaled_dot_product_attention(q, k, v,is_causal=True)
         y = y.transpose(1,2).contiguous().view(B, T, C)
         y = self.c_proj(y)
         return y
@@ -121,6 +123,9 @@ class GPT(nn.Module):
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
         return logits, loss
 
+    def configure_optimizers(self,weight_decay,learning_rate,device):
+        pass
+
     @classmethod
     def from_pretrained(cls, model_type):
         """Loads pretrained GPT-2 model weights from huggingface"""
@@ -192,13 +197,31 @@ class DataLoaderLite:
             self.current_position = 0
         return x,y
 
-train_loader = DataLoaderLite(4,1024)
+train_loader = DataLoaderLite(16,1024)
 torch.set_float32_matmul_precision('high')
-model = GPT(GPTConfig())
+model = GPT(GPTConfig(vocab_size=50304))
 model.to(device)
 model = torch.compile(model)
-optimizer = torch.optim.AdamW(model.parameters(), lr=4e-4)
-for i in range(50):
+
+
+max_lr = 6e-4
+min_lr = max_lr*0.1
+warmup_steps = 10
+max_steps = 50
+def get_lr(it):
+    if it < warmup_steps:
+        return max_lr*(it+1)/warmup_steps
+    if it > max_steps:
+        return min_lr
+    decay_ratio = (it-warmup_steps)/(warmup_steps-max_steps)
+    assert 0 <= decay_ratio <= 1
+    coeff = 0.5*(1.0+math.cos(math.pi*decay_ratio))
+    return min_lr + coeff*(max_lr-min_lr)
+
+
+# optimizer = torch.optim.AdamW(model.parameters(), lr=4e-4,betas=(0.9,0.95),eps=1e-8)
+optimizer = model.configure_optimizers(weigh_decay=0.1,learning_rate = 6e-4,device = device)
+for step in range(max_steps):
     t0 = time.time()
     x,y = train_loader.next_batch()
     optimizer.zero_grad()
@@ -206,13 +229,17 @@ for i in range(50):
         logits,loss = model(x,y)
         import code;code.interact(local=locals())
     loss.backward()
+    norm = nn.utils.clip_grad_norm_(model.parameters(), 1)
+    lr_rate = get_lr(step)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr_rate
     optimizer.step()
     # torch.cuda.synchronize()
     loss_item = loss.item()
     t1 = time.time()
     dt = (t1-t0)*1000
     token_per_sec = (train_loader.B*train_loader.T)/(dt/1000)
-    print(f"step {i}:, loss {loss.item()},dt {dt:.2f}ms, tokens/sec {token_per_sec:.2f}")
+    print(f"step {step}:, loss {loss.item()}, norm {norm}, dt {dt:.2f}ms, tokens/sec {token_per_sec:.2f}")
 
 
 sys.exit(0)
